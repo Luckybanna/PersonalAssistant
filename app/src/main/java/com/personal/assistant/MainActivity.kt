@@ -1,13 +1,16 @@
 package com.personal.assistant
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Create
@@ -23,11 +26,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -35,48 +38,79 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 
 class MainActivity : ComponentActivity() {
+
+    private var speaker: Speaker? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        val store = (application as AssistantApp).store
+        ReminderScheduler.ensureChannel(this)
+        val sp = Speaker(this)
+        speaker = sp
+
         setContent {
-            val colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-            MaterialTheme(colorScheme = colors) {
-                AppRoot()
+            val dark = when (store.themeMode) {
+                1 -> false
+                2 -> true
+                else -> isSystemInDarkTheme()
+            }
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+                val notifLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { }
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        ContextCompat.checkSelfPermission(
+                            this@MainActivity, Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+                AppRoot(store, sp)
             }
         }
     }
+
+    override fun onDestroy() {
+        speaker?.shutdown()
+        super.onDestroy()
+    }
 }
 
-private data class Tab(val route: String, val label: String, val icon: ImageVector)
+private data class NavTab(val route: String, val label: String, val icon: ImageVector)
 
-private val tabs = listOf(
-    Tab("home", "Home", Icons.Filled.Home),
-    Tab("chat", "AI Chat", Icons.Filled.Send),
-    Tab("tasks", "Tasks", Icons.Filled.CheckCircle),
-    Tab("reminders", "Reminders", Icons.Filled.Notifications),
-    Tab("notes", "Notes", Icons.Filled.Create)
+private val navTabs = listOf(
+    NavTab("home", "Home", Icons.Filled.Home),
+    NavTab("chat", "AI Chat", Icons.Filled.Send),
+    NavTab("tasks", "Tasks", Icons.Filled.CheckCircle),
+    NavTab("reminders", "Reminders", Icons.Filled.Notifications),
+    NavTab("notes", "Notes", Icons.Filled.Create)
 )
 
 @Composable
-private fun AppRoot() {
-    val navController = rememberNavController()
-    val backStackEntry by navController.currentBackStackEntryAsState()
+private fun AppRoot(store: Store, speaker: Speaker) {
+    val nav = rememberNavController()
+    val backStackEntry by nav.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+
+    val goTab: (String) -> Unit = { route ->
+        nav.navigate(route) {
+            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     Scaffold(
         bottomBar = {
             NavigationBar {
-                tabs.forEach { tab ->
+                navTabs.forEach { tab ->
                     NavigationBarItem(
                         selected = currentRoute == tab.route,
-                        onClick = {
-                            navController.navigate(tab.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { goTab(tab.route) },
                         icon = { Icon(tab.icon, contentDescription = tab.label) },
                         label = { Text(tab.label) }
                     )
@@ -85,31 +119,17 @@ private fun AppRoot() {
         }
     ) { innerPadding ->
         NavHost(
-            navController = navController,
+            navController = nav,
             startDestination = "home",
             modifier = Modifier.padding(innerPadding)
         ) {
-            tabs.forEach { tab ->
-                composable(tab.route) {
-                    PlaceholderScreen(tab.label)
-                }
-            }
+            composable("home") { HomeScreen(store, goTab) { nav.navigate(it) } }
+            composable("chat") { ChatScreen(store, speaker) }
+            composable("tasks") { TasksScreen(store) }
+            composable("reminders") { RemindersScreen(store) }
+            composable("notes") { NotesScreen(store) }
+            composable("memory") { MemoryScreen(store) { nav.popBackStack() } }
+            composable("settings") { SettingsScreen(store) { nav.popBackStack() } }
         }
-    }
-}
-
-@Composable
-private fun PlaceholderScreen(title: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "$title\n\nYe screen agle phase mein banegi.",
-            style = MaterialTheme.typography.titleMedium
-        )
     }
 }

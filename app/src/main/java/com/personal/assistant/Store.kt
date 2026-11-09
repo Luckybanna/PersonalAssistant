@@ -163,12 +163,12 @@ class Store(context: Context) {
         model = m
         prefs.edit().putString("model", m).apply()
     }
-
+    @JvmName("updateSpeak")
     fun setSpeak(v: Boolean) {
         speak = v
         prefs.edit().putBoolean("speak", v).apply()
     }
-
+ @JvmName("updateThemeMode")
     fun setThemeMode(v: Int) {
         themeMode = v
         prefs.edit().putInt("theme", v).apply()
